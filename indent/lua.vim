@@ -132,9 +132,7 @@ endfunction "}}}
 
 fun! s:search_for_pair(cur_ln, start_reg, mid_reg, end_reg) "{{{
 
-    let skiplines = "line('.') < " . (a:cur_ln - 50) . " ? 'dummy' :"
-        \ . " synIDattr(synID(line('.'), col('.'), 1), 'name')"
-        \ . " =~ '\\(Comment\\|String\\)$'"
+    let skiplines = "synIDattr(synID(line('.'), col('.'), 1), 'name') =~ '\\(Comment\\|String\\)$'"
 
     " searching backward from at end '}' fails to find the pair
     " And searching forward from the leading '{' fails to find the pair.
