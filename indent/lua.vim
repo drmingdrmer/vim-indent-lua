@@ -61,6 +61,8 @@ let s:lua_indent = {
 
 let s:lua_trailing_op = '\v[,=\\+\-*/]\s*$'
 
+let s:skiplines = "synIDattr(synID(line('.'), col('.'), 1), 'name') =~ '\\(Comment\\|String\\)$'"
+
 
 function! GetLuaIndent()
 
@@ -76,21 +78,21 @@ function! GetLuaIndent()
         return 0
     endif
 
-    let pair_left_pos = s:search_for_pair(v:lnum, s:lua_start, s:lua_mid, s:lua_end)
-    call s:dd('find block pos: ' . string(pair_left_pos))
+    let block_pos = s:find_container_block([v:lnum, 1])
+    call s:dd('find block pos: ' . string(block_pos))
 
-    if pair_left_pos[0] > 0
+    if block_pos[0] > 0
 
-        let _matched = getline(pair_left_pos[0])[pair_left_pos[1] - 1 : ]
+        let _matched = getline(block_pos[0])[block_pos[1] - 1 : ]
         call s:dd('_matched: ' . _matched)
 
         let matched = matchstr(_matched, s:lua_left)
         let trailing = _matched[len(matched) : ]
 
-        call s:dd('pair left:' . matched)
+        call s:dd('block left:' . matched)
         call s:dd('trailing:' . trailing)
 
-        return s:get_indent_of_pair(pair_left_pos, matched, trailing)
+        return s:get_indent_in_block(block_pos, matched, trailing)
     else
         let _ind = s:continuous_line_indent(v:lnum)
         call s:dd('continuous line indent: ' . _ind)
@@ -98,21 +100,16 @@ function! GetLuaIndent()
             return _ind
         end
 
+        let container_pos = [0, 0]
+
         let cur = prevnonblank(v:lnum - 1)
         if cur == 0
             return 0
         endif
 
-        while 1
-            let p = s:search_for_pair(cur, s:lua_start, s:lua_mid, s:lua_end)
-            call s:dd("found prev pair:" . string(p))
-            if p[0] == 0 || p[0] == 1
-                break
-            endif
-            let cur = p[0]
-        endwhile
+        let pos = s:find_child_block([cur, 1], container_pos)
 
-        let head_ln = s:find_continous_head(cur)
+        let head_ln = s:find_continous_head(pos[0])
         return indent(head_ln)
     endif
 
@@ -130,27 +127,17 @@ fun! s:is_literal(ln, col) "{{{
 endfunction "}}}
 
 
-fun! s:search_for_pair(cur_ln, start_reg, mid_reg, end_reg) "{{{
-
-    let skiplines = "synIDattr(synID(line('.'), col('.'), 1), 'name') =~ '\\(Comment\\|String\\)$'"
-
-    " searching backward from at end '}' fails to find the pair
-    " And searching forward from the leading '{' fails to find the pair.
-
-    call cursor(a:cur_ln - 1, 1000)
-    let pp = searchpairpos( a:start_reg, a:mid_reg, a:end_reg, 'bWcn', skiplines )
-    return pp
-endfunction "}}}
-
-
-fun! s:get_indent_of_pair(matched_pos, matched, trailing) "{{{
+fun! s:get_indent_in_block(matched_pos, matched, trailing) "{{{
 
     let sw = &shiftwidth
-    let ref_ind = indent(a:matched_pos[0])
     let m = a:matched
     let t = a:trailing
 
-    " if it is 'end' for a 'function', or 'end' for 'then'
+    let container_pos = s:find_container_block(a:matched_pos)
+    let pos = s:find_child_block([a:matched_pos[0], 1], container_pos)
+    let ref_ind = indent(pos[0])
+
+    " if it is 'end' for a 'function', or 'end' for a 'then'
     let endpart = s:lua_pairs[m]
     if getline(v:lnum) =~ '\v^\s*' . endpart
         return ref_ind
@@ -166,6 +153,8 @@ fun! s:get_indent_of_pair(matched_pos, matched, trailing) "{{{
             return a:matched_pos[1] - 1 + len(m) + len(matchstr(t, '\v^\s?'))
         end
     endif
+
+    " in block indent
 
     " find the start of a expression in a multi-line block, like function-end
     " or if () then-end.
@@ -183,6 +172,43 @@ fun! s:get_indent_of_pair(matched_pos, matched, trailing) "{{{
 
 endfunction "}}}
 
+
+fun! s:find_child_block(pos, container_pos) "{{{
+
+    let pos = a:pos
+    call s:dd('find_child_block from:' . string(pos) . ' container: ' . string(a:container_pos))
+
+    while 1
+        let parent_pos = s:find_container_block(pos)
+
+        call s:dd('parent_pos: ' . string(parent_pos))
+
+        if parent_pos == a:container_pos
+            return pos
+        endif
+
+        if parent_pos[0] < a:container_pos[0]
+              \ || (parent_pos[0] == a:container_pos[0]
+              \     && parent_pos[1] < a:container_pos[1])
+            call s:dd('reached upper level: ' . string(parent_pos))
+            return pos
+        endif
+
+        let pos = parent_pos
+
+    endwhile
+
+endfunction "}}}
+
+
+" NOTE: searching backward from at end '}' fails to find the pair
+"       And searching forward from the leading '{' fails to find the pair.
+fun! s:find_container_block(pos) "{{{
+    call cursor(a:pos)
+    return searchpairpos(s:lua_start, s:lua_mid, s:lua_end, 'bWn', s:skiplines)
+endfunction "}}}
+
+
 fun! s:continuous_line_indent(cur_ln) "{{{
     let sw = &shiftwidth
     let head_ln = s:find_continous_head(a:cur_ln)
@@ -195,7 +221,9 @@ fun! s:continuous_line_indent(cur_ln) "{{{
 
 endfunction "}}}
 
+
 fun! s:find_continous_head(cur_ln) "{{{
+
     let cur_ln = a:cur_ln
     call s:dd('looking for trailing_op: from: ' . cur_ln)
 
